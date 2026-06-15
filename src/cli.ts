@@ -115,19 +115,24 @@ async function pickSession(g: Project): Promise<Session | typeof BACK | null> {
  * the user backs all the way out. Re-reads the session list on every call so a
  * hub loop reflects activity from the session that just ran.
  */
-async function selectSession(opts: { all?: boolean; limit?: string }): Promise<Session | null> {
+async function selectSession(
+  opts: { all?: boolean; limit?: string },
+  showHeader: boolean,
+): Promise<Session | null> {
   const all = listSessions();
   if (all.length === 0) {
-    intro("");
+    if (showHeader) intro("");
     cancel("No Claude Code sessions found under ~/.claude/projects.");
     process.exit(1);
   }
 
-  const limit = opts.all ? all.length : Number.parseInt(opts.limit ?? `${DEFAULT_LIMIT}`, 10);
-  const sessions = all.slice(0, Math.max(1, limit));
+  // Fall back to the default when --limit isn't a positive number (e.g. `-n abc`).
+  const parsed = Number.parseInt(opts.limit ?? `${DEFAULT_LIMIT}`, 10);
+  const limit = opts.all ? all.length : Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LIMIT;
+  const sessions = all.slice(0, limit);
   const projects = groupByProject(sessions);
 
-  intro(`${all.length} sessions · ${projects.length} projects`);
+  if (showHeader) intro(`${all.length} sessions · ${projects.length} projects`);
 
   // Two-step picker: project, then session. Looping lets the session step
   // send the user back up to the project list; `lastIdx` restores the project
@@ -165,7 +170,7 @@ async function pick(opts: { all?: boolean; limit?: string; once?: boolean }): Pr
   // and resumes — so your shell is left in the project. A child process can't
   // move the parent's cwd; the shell can.
   if (outFile) {
-    const s = await selectSession(opts);
+    const s = await selectSession(opts, true);
     if (!s) {
       cancel("Cancelled.");
       process.exit(0);
@@ -178,19 +183,35 @@ async function pick(opts: { all?: boolean; limit?: string; once?: boolean }): Pr
   // Hub mode (default, zero-install): launch claude as a child in the chosen
   // dir and, when it exits, return to the picker. Loop until the user backs out.
   // `--once` resumes a single session and exits (handy for scripting).
+  // `fastFails` guards against a tight spin when `claude` can't launch: with
+  // shell:true a missing binary surfaces as an instant nonzero exit, not an
+  // `error` event, so we bail after two back-to-back immediate failures.
+  let first = true;
+  let fastFails = 0;
   for (;;) {
-    const s = await selectSession(opts);
+    const s = await selectSession(opts, first);
+    first = false;
     if (!s) {
       outro(color.dim("Bye."));
       process.exit(0);
     }
     outro(color.green(`Launching claude in ${s.cwd}`));
+    let code: number;
+    const startedAt = Date.now();
     try {
-      const code = await runClaude(s);
-      if (opts.once) process.exit(code);
+      code = await runClaude(s);
     } catch (err) {
       cancel(`Could not launch claude: ${(err as Error).message}`);
       process.exit(1);
+    }
+    if (opts.once) process.exit(code);
+    if (code !== 0 && Date.now() - startedAt < 1500) {
+      if (++fastFails >= 2) {
+        cancel("`claude` keeps exiting immediately — is it installed and on your PATH?");
+        process.exit(1);
+      }
+    } else {
+      fastFails = 0;
     }
   }
 }

@@ -38,7 +38,7 @@ const BASH = String.raw`__NAME__() {
     local dir id
     { IFS= read -r dir; IFS= read -r id; } < "$tmp"
     __DIRFIX__                                  # backslash -> forward slash so cd works in bash
-    [ -n "$dir" ] && cd "$dir"
+    [ -n "$dir" ] && cd -- "$dir"
     if [ -n "$id" ]; then claude --resume "$id"; else claude; fi
   fi
   rm -f "$tmp"

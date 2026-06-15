@@ -29,14 +29,6 @@ export interface Session {
   file: string;
 }
 
-/**
- * Forward encoder mirroring how Claude Code names project folders:
- * backslash, forward-slash, colon and dot all collapse to "-".
- * This is lossy and one-way by design (that is why we read the real
- * path from `cwd`/`project` fields rather than reversing folder names).
- */
-export const encodeProject = (p: string): string => p.replace(/[\\/:.]/g, "-");
-
 interface HistEntry {
   cwd: string;
   firstPrompt?: string;
@@ -81,14 +73,15 @@ function readHistory(): Map<string, HistEntry> {
 /**
  * Fallback for sessions missing from history.jsonl: read the head of the
  * transcript once and pull both the first `cwd` and the first user prompt.
- * Reads at most 64 KiB. Either field may be undefined if not found in the head.
+ * Reads at most 256 KiB — enough to clear leading attachments/context before
+ * the first prompt. Either field may be undefined if not found in the head.
  */
 function readHeadFromTranscript(file: string): { cwd?: string; firstPrompt?: string } {
   const out: { cwd?: string; firstPrompt?: string } = {};
   let fd: number | undefined;
   try {
     fd = openSync(file, "r");
-    const buf = Buffer.alloc(64 * 1024);
+    const buf = Buffer.alloc(256 * 1024);
     const n = readSync(fd, buf, 0, buf.length, 0);
     const text = buf.subarray(0, n).toString("utf8");
     for (const line of text.split("\n")) {
@@ -109,6 +102,30 @@ function readHeadFromTranscript(file: string): { cwd?: string; firstPrompt?: str
     if (fd !== undefined) closeSync(fd);
   }
   return out;
+}
+
+/**
+ * Tag names Claude Code wraps around injected (non-user-typed) content. A text
+ * block opening with one of these is an envelope, not the prompt — but a real
+ * prompt that merely starts with `<` (e.g. `<div>…`) is kept.
+ */
+const ENVELOPE_TAGS = new Set([
+  "system-reminder",
+  "command-message",
+  "command-name",
+  "command-args",
+  "local-command-stdout",
+  "local-command-caveat",
+  "user-prompt-submit-hook",
+  "bash-input",
+  "bash-stdout",
+  "bash-stderr",
+]);
+
+/** True when `text` opens with a known Claude Code envelope tag. */
+function isEnvelope(text: string): boolean {
+  const m = /^<\/?([a-z][a-z0-9-]*)/.exec(text);
+  return m ? ENVELOPE_TAGS.has(m[1]!) : false;
 }
 
 /**
@@ -142,8 +159,7 @@ function firstUserText(rec: {
 
   for (const raw of texts) {
     const text = raw.trim();
-    // Skip slash-command / local-command meta envelopes (they open with a tag).
-    if (text && !text.startsWith("<")) return text;
+    if (text && !isEnvelope(text)) return text;
   }
   return undefined;
 }

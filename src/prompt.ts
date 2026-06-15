@@ -83,8 +83,10 @@ const filterSelectInner = createPrompt<unknown, FilterSelectConfig<unknown>>(
       } else if (key.name === "escape" && config.escapeValue !== undefined) {
         setStatus("done");
         done(config.escapeValue);
-      } else {
-        // any other key: readline already updated its buffer — mirror it
+      } else if (rl.line !== term) {
+        // The filter text actually changed (typing / backspace) — mirror it and
+        // reset to the top. Keys that don't edit the buffer (←/→/Home/End) fall
+        // through untouched, so they don't jump the cursor back to row 0.
         setTerm(rl.line);
         setActive(0);
       }
