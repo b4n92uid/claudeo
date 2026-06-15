@@ -1,30 +1,45 @@
 # claudeo
 
-Interactive terminal picker to resume **Claude Code** sessions across directories.
-Global binary `claudeo`; the user-facing command is the shell function **`co`**.
+Interactive hub to resume **Claude Code** sessions across directories. Global
+binary `claudeo` (the default, zero-install entry point). An optional shell-function
+wrapper — name chosen by the developer, default `claudeo` (shadows the binary) —
+additionally leaves the parent shell in the chosen dir.
 
 ## What it does
 
-`co` walks you through a **two-step, type-to-filter picker** (newest-first at each
-step): first pick a **project**, then pick a **session** within it. Each step has a
-live search bar. **Esc** in the session step goes **back** to the project list; Esc
-in the project step **quits**. On selection it **cd's into that session's directory
-and runs `claude --resume <id>`**. Sessions are grouped by their real `cwd` via
-`groupByProject()` in `src/sessions.ts`.
+A **two-step, type-to-filter picker** (newest-first at each step): first pick a
+**project**, then a **session** within it. Each step has a live search bar. **Esc**
+in the session step goes **back** to the project list; Esc in the project step
+**quits**. Sessions are grouped by their real `cwd` via `groupByProject()` in
+`src/sessions.ts`.
 
-## Why a shell function and not just a binary
+## Two run modes (`src/cli.ts`)
 
-A child process cannot change its parent shell's working directory. So `co` is a
-shell function (PowerShell / bash) that wraps the `claudeo` binary:
+`selectSession()` renders the picker once and returns the chosen session (re-reading
+the list each call). `pick()` branches on whether the wrapper is driving it:
 
-1. `co` sets `CLAUDEO_OUT` to a temp file and runs `claudeo`.
-2. `claudeo` renders the picker on the terminal. On selection it writes two lines
-   to `$CLAUDEO_OUT`:  `<cwd>\n<sessionId>`.
-3. `co` reads them, `cd`s into `<cwd>`, then runs `claude --resume <sessionId>`.
-4. On cancel, `claudeo` writes nothing → `co` is a no-op.
+- **Hub mode (default, no wrapper).** `runClaude()` spawns `claude --resume <id>` as
+  a child with `cwd` set + `stdio: inherit`; when it exits, loop back to the picker.
+  `--once` resumes a single session and exits instead of looping. The parent shell's
+  cwd does **not** change (a child can't move its parent) — that's the wrapper's job.
+- **Wrapper mode (`CLAUDEO_OUT` set).** One-shot: write `<cwd>\n<sessionId>`
+  to `$CLAUDEO_OUT` and return; the shell function reads it, `cd`s the **parent**
+  shell into `<cwd>`, then runs `claude --resume`. On cancel, nothing is written →
+  the function is a no-op.
 
-Run `claudeo` standalone (no wrapper) and it falls back to spawning `claude`
-itself in the chosen dir (cwd won't persist in the parent shell).
+## Why the optional shell function
+
+A child process cannot change its parent shell's working directory — only the shell
+can. So the wrapper (PowerShell / bash, from `src/shell.ts` via `claudeo shell-init
+[shell] [name]`) wraps the binary purely to leave your shell in the project dir after
+Claude exits. Hub mode covers everything else without any profile edit.
+
+The function name is the developer's choice (default `claudeo`). The emitted function
+always calls the **binary** via a function-bypassing form — `command claudeo` (bash)
+and `Get-Command -CommandType Application claudeo` (pwsh) — so naming the function
+`claudeo` shadows the bare command to add cd-persistence **without recursing**. The
+bash template injects the `${dir//\\//}` parameter-expansion via a `__DIRFIX__`
+placeholder so it survives JS template-literal interpolation.
 
 ## Where the data comes from
 
@@ -58,7 +73,8 @@ one project (newest session's casing wins for display).
 - `src/prompt.ts` — `filterSelect`, a type-to-filter select built on `@inquirer/core`
   (synchronous source + an Esc keybinding the stock `search` prompt lacks).
 - `src/sessions.ts` — data layer: reads `~/.claude`, builds the `Session[]` list.
-- `src/shell.ts` — the `co` wrapper text for pwsh / bash (`claudeo shell-init`).
+- `src/shell.ts` — the cd-persisting wrapper text for pwsh / bash, named per
+  `claudeo shell-init [shell] [name]` (default `claudeo`).
 
 ## Commands
 
@@ -70,10 +86,11 @@ npm link             # register `claudeo` globally (or: npm run link = build+lin
 node dist/cli.js     # run locally without linking
 ```
 
-### Install the `co` command
+### Install the optional cd-persisting wrapper
 
 ```powershell
-# PowerShell (primary). Append the wrapper to your profile, then reload:
+# PowerShell (primary). Append the wrapper to your profile, then reload.
+# Pass a name (e.g. `cs`) as a 2nd arg to use that instead of `claudeo`.
 claudeo shell-init pwsh | Add-Content $PROFILE
 . $PROFILE
 ```

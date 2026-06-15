@@ -110,7 +110,12 @@ async function pickSession(g: Project): Promise<Session | typeof BACK | null> {
   }
 }
 
-async function pick(opts: { all?: boolean; limit?: string }): Promise<void> {
+/**
+ * Render the two-step picker once and return the chosen session, or null when
+ * the user backs all the way out. Re-reads the session list on every call so a
+ * hub loop reflects activity from the session that just ran.
+ */
+async function selectSession(opts: { all?: boolean; limit?: string }): Promise<Session | null> {
   const all = listSessions();
   if (all.length === 0) {
     intro("");
@@ -127,59 +132,85 @@ async function pick(opts: { all?: boolean; limit?: string }): Promise<void> {
   // Two-step picker: project, then session. Looping lets the session step
   // send the user back up to the project list; `lastIdx` restores the project
   // cursor so going back lands on the project you just left.
-  let s: Session | undefined;
   let lastIdx = 0;
-  while (!s) {
+  while (true) {
     const g = await pickProject(projects, lastIdx);
-    if (!g) {
-      cancel("Cancelled.");
-      process.exit(0);
-    }
+    if (!g) return null;
     lastIdx = projects.indexOf(g);
     const chosen = await pickSession(g);
-    if (chosen === null) {
+    if (chosen === null) return null;
+    if (chosen === BACK) continue;
+    return chosen;
+  }
+}
+
+/** Launch `claude --resume` as a child in the session's dir; resolve on exit. */
+function runClaude(s: Session): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("claude", ["--resume", s.id], {
+      cwd: s.cwd,
+      stdio: "inherit",
+      shell: true, // resolves the `claude` shim (.cmd/.ps1) on Windows PATH
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => resolve(code ?? 0));
+  });
+}
+
+async function pick(opts: { all?: boolean; limit?: string; once?: boolean }): Promise<void> {
+  const outFile = process.env.CLAUDEO_OUT;
+
+  // Wrapper mode: one-shot. Hand the target back to the cd-persisting shell
+  // function (from `claudeo shell-init`), which cd's the *parent* shell into it
+  // and resumes — so your shell is left in the project. A child process can't
+  // move the parent's cwd; the shell can.
+  if (outFile) {
+    const s = await selectSession(opts);
+    if (!s) {
       cancel("Cancelled.");
       process.exit(0);
     }
-    if (chosen === BACK) continue;
-    s = chosen;
-  }
-
-  const outFile = process.env.CLAUDEO_OUT;
-
-  if (outFile) {
-    // Driven by the `co` shell wrapper: hand back the target, let the shell cd + resume.
     writeFileSync(outFile, `${s.cwd}\n${s.id}\n`);
     outro(color.green(`→ ${s.cwd}`));
     return;
   }
 
-  // Standalone (no wrapper): resume directly in the chosen dir. cwd won't persist
-  // in the parent shell — install the `co` wrapper for that (see `claudeo shell-init`).
-  outro(color.green(`Launching claude in ${s.cwd}`));
-  const child = spawn("claude", ["--resume", s.id], {
-    cwd: s.cwd,
-    stdio: "inherit",
-    shell: true,
-  });
-  child.on("exit", (code) => process.exit(code ?? 0));
+  // Hub mode (default, zero-install): launch claude as a child in the chosen
+  // dir and, when it exits, return to the picker. Loop until the user backs out.
+  // `--once` resumes a single session and exits (handy for scripting).
+  for (;;) {
+    const s = await selectSession(opts);
+    if (!s) {
+      outro(color.dim("Bye."));
+      process.exit(0);
+    }
+    outro(color.green(`Launching claude in ${s.cwd}`));
+    try {
+      const code = await runClaude(s);
+      if (opts.once) process.exit(code);
+    } catch (err) {
+      cancel(`Could not launch claude: ${(err as Error).message}`);
+      process.exit(1);
+    }
+  }
 }
 
 const program = new Command();
 
 program
   .name("claudeo")
-  .description("Interactive picker to resume Claude Code sessions across directories")
+  .description("Interactive hub to resume Claude Code sessions across directories")
   .version("0.1.0")
   .option("-a, --all", "show every session (default: newest 40)")
   .option("-n, --limit <n>", "max sessions to show", `${DEFAULT_LIMIT}`)
+  .option("-1, --once", "resume one session and exit (don't return to the picker)")
   .action((opts) => pick(opts));
 
 program
-  .command("shell-init [shell]")
-  .description("print the `co` shell wrapper (pwsh | bash) for your profile")
-  .action((shell?: string) => {
-    process.stdout.write(shellInit(shell));
+  .command("shell-init [shell] [name]")
+  .description("print the cd-persisting shell wrapper (pwsh | bash); name defaults to `claudeo`")
+  .action((shell?: string, name?: string) => {
+    process.stdout.write(shellInit(shell, name));
   });
 
 program.parseAsync().catch((err) => {

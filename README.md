@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <b>An interactive terminal picker to resume <a href="https://claude.com/claude-code">Claude Code</a> sessions across every directory.</b><br>
-  Type <code>co</code>, filter to a project, pick a session — it <code>cd</code>s there and runs <code>claude --resume</code>.
+  <b>An interactive hub to resume <a href="https://claude.com/claude-code">Claude Code</a> sessions across every directory.</b><br>
+  Run <code>claudeo</code>, filter to a project, pick a session — it launches Claude in that directory and returns you to the picker when you exit.
 </p>
 
 <p align="center">
@@ -54,8 +54,11 @@ right back on the project you came from.
   case-variant paths (`W:\…` vs `w:\…`) merge into one.
 - 💬 **Real prompt previews** — shows each session's first typed prompt, recovered
   straight from the transcript when the history log doesn't have it.
-- 📂 **Actually changes directory** — a tiny shell function `cd`s your parent shell
-  into the session's directory before resuming (a binary alone can't).
+- 🛰️ **Session hub** — launches Claude in the session's directory, then drops you
+  back at the picker when it exits, so you can hop between projects in one place.
+- 📂 **Optional shell wrapper** — an opt-in shell function (named whatever you like)
+  additionally leaves *your shell* in the project directory after Claude exits (a
+  binary alone can't `cd` its parent).
 - 🪶 **Tiny & fast** — one small TypeScript binary, no telemetry, no config.
 
 ## Install
@@ -66,10 +69,21 @@ npm install
 npm run link        # builds + registers the `claudeo` binary globally
 ```
 
-Then add the `co` shell function so it can change your shell's directory:
+That's it — run **`claudeo`** and you have a working session hub. No shell
+config required.
+
+### Optional: leave your shell in the project
+
+By default `claudeo` launches Claude as a child process, so when Claude exits your
+shell returns to wherever it was. If you'd rather be **left in the project
+directory** afterward, install the shell wrapper — a function that runs the picker,
+then `cd`s your shell into the chosen directory before resuming.
+
+**The function name is yours to choose.** Use the **same name** to upgrade `claudeo`
+itself in place (the function shadows the binary and adds cd-persistence):
 
 ```powershell
-# PowerShell (primary)
+# PowerShell (primary) — defines a `claudeo` function
 claudeo shell-init pwsh | Add-Content $PROFILE ; . $PROFILE
 ```
 
@@ -78,29 +92,39 @@ claudeo shell-init pwsh | Add-Content $PROFILE ; . $PROFILE
 claudeo shell-init bash >> ~/.bashrc && source ~/.bashrc
 ```
 
+…or pass a **different name** to keep both — bare `claudeo` stays the looping hub,
+and your alias does the cd-persisting variant:
+
+```bash
+claudeo shell-init bash cs >> ~/.bashrc && source ~/.bashrc   # adds a `cs` function
+```
+
 > **Why a shell function?** A child process can't change its parent shell's working
-> directory. The `claudeo` binary renders the picker and writes the chosen
-> `<cwd>` + `<sessionId>` to a temp file; the `co` function reads it, `cd`s **your
-> shell** into that directory, then runs `claude --resume` — so when you exit Claude,
-> your shell is left in the project. Run `claudeo` bare and it still resumes the
-> session in its own directory, but as a child process, so your shell returns to where
-> it started once Claude exits.
+> directory — only the shell itself can. So the function runs the `claudeo` binary,
+> which writes the chosen `<cwd>` + `<sessionId>` to a temp file; the function reads
+> it, `cd`s **your shell** into that directory, then runs `claude --resume`. (Naming
+> the function `claudeo` doesn't recurse — it invokes the binary via `command
+> claudeo`.)
 
 ## Usage
 
 ```bash
-co              # pick a session → cd into its dir + claude --resume
-co -a           # include every session (default: newest 40)
-co -n 100       # cap the list at N
-claudeo         # resume directly, without leaving your shell in the project dir
+claudeo         # hub: pick → launch Claude in its dir → back to the picker on exit
+claudeo -a      # include every session (default: newest 40)
+claudeo -n 100  # cap the list at N
+claudeo --once  # resume a single session and exit (no return-to-picker loop)
 ```
+
+With the optional wrapper installed under the same name, `claudeo` instead resumes
+once and leaves your shell in the project directory. Give the wrapper a different
+name to keep both.
 
 | Key | Action |
 |-----|--------|
 | `type` | filter the current list |
 | `↑` / `↓` | move the cursor |
 | `⏎` | select |
-| `Esc` | go back a step (quit from the project list) |
+| `Esc` | go back a step (quit / exit the hub from the project list) |
 | `Ctrl+C` | cancel |
 
 ## How it works
