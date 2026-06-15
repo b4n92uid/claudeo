@@ -1,0 +1,38 @@
+{
+  "name": "claudeo",
+  "version": "0.1.0",
+  "description": "Interactive picker to resume Claude Code sessions across directories",
+  "type": "module",
+  "bin": {
+    "claudeo": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "start": "node dist/cli.js",
+    "link": "npm run build && npm link"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "cli",
+    "resume",
+    "sessions"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@inquirer/core": "^10.3.0",
+    "commander": "^12.1.0",
+    "picocolors": "^1.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsup": "^8.1.0",
+    "typescript": "^5.5.0"
+  }
+}

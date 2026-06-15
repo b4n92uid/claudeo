@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# logs
+*.log
+npm-debug.log*
+
+# env / secrets
+.env
+.env.*
+
+# scratch / test artifacts
+_tmp/
+_probe.mjs
+.playwright-mcp/
+
+# OS
+.DS_Store
+Thumbs.db
