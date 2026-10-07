@@ -8,7 +8,8 @@ additionally leaves the parent shell in the chosen dir.
 ## What it does
 
 A **two-step, type-to-filter picker** (newest-first at each step): first pick a
-**project**, then a **session** within it. Each step has a live search bar. **Esc**
+**project**, then a **session** within it. The session list starts with a **+ New session** row that
+launches a fresh `claude` in the project dir. Each step has a live search bar. **Esc**
 in the session step goes **back** to the project list; Esc in the project step
 **quits**. Sessions are grouped by their real `cwd` via `groupByProject()` in
 `src/sessions.ts`.

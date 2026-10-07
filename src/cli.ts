@@ -12,6 +12,11 @@ const DEFAULT_LIMIT = 40;
 const BACK = Symbol("back");
 /** Esc in the project step (top level) → quit. */
 const CANCEL = Symbol("cancel");
+/** First row of the session step: start a fresh session in the project. */
+const NEW = Symbol("new");
+
+/** Where to launch claude; no `id` means a new session. */
+type Target = { cwd: string; id?: string };
 
 /** Banner printed above the picker. */
 function intro(text: string): void {
@@ -87,22 +92,34 @@ async function pickProject(projects: Project[], initialActive: number): Promise<
 }
 
 /** Step 2: search-pick a session within a project. Esc returns BACK to go up. */
-async function pickSession(g: Project): Promise<Session | typeof BACK | null> {
+async function pickSession(g: Project): Promise<Session | typeof NEW | typeof BACK | null> {
   try {
-    return await filterSelect<Session | typeof BACK>({
+    return await filterSelect<Session | typeof NEW | typeof BACK>({
       message: `Sessions in ${g.project}`,
       escapeValue: BACK,
-      source: (term) =>
-        g.sessions
+      source: (term) => [
+        // Hidden when it doesn't match, so Enter on a filtered list picks the top match.
+        ...(matches(term, "new session")
+          ? [
+              {
+                name: `${"new".padStart(4)}  ${color.green("+ New session")}`,
+                value: NEW as Session | typeof NEW | typeof BACK,
+                short: "New session",
+                description: color.dim(g.cwd),
+              },
+            ]
+          : []),
+        ...g.sessions
           .filter((s) => matches(term, s.firstPrompt, s.id))
           .map((s) => ({
             name: `${color.dim(rel(s.mtime).padStart(4))}  ${
               s.firstPrompt ? truncate(s.firstPrompt, 72) : color.dim("(no prompt recorded)")
             }`,
-            value: s as Session | typeof BACK,
+            value: s as Session | typeof NEW | typeof BACK,
             short: s.firstPrompt ? truncate(s.firstPrompt, 48) : s.id,
             description: color.dim(s.id),
           })),
+      ],
     });
   } catch (err) {
     if (isCancelError(err)) return null;
@@ -118,7 +135,7 @@ async function pickSession(g: Project): Promise<Session | typeof BACK | null> {
 async function selectSession(
   opts: { all?: boolean; limit?: string },
   showHeader: boolean,
-): Promise<Session | null> {
+): Promise<Target | null> {
   const all = listSessions();
   if (all.length === 0) {
     if (showHeader) intro("");
@@ -145,15 +162,16 @@ async function selectSession(
     const chosen = await pickSession(g);
     if (chosen === null) return null;
     if (chosen === BACK) continue;
+    if (chosen === NEW) return { cwd: g.cwd };
     return chosen;
   }
 }
 
-/** Launch `claude --resume` as a child in the session's dir; resolve on exit. */
-function runClaude(s: Session): Promise<number> {
+/** Launch claude (resuming `t.id` if set) as a child in `t.cwd`; resolve on exit. */
+function runClaude(t: Target): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn("claude", ["--resume", s.id], {
-      cwd: s.cwd,
+    const child = spawn("claude", t.id ? ["--resume", t.id] : [], {
+      cwd: t.cwd,
       stdio: "inherit",
       shell: true, // resolves the `claude` shim (.cmd/.ps1) on Windows PATH
     });
@@ -175,7 +193,7 @@ async function pick(opts: { all?: boolean; limit?: string; once?: boolean }): Pr
       cancel("Cancelled.");
       process.exit(0);
     }
-    writeFileSync(outFile, `${s.cwd}\n${s.id}\n`);
+    writeFileSync(outFile, `${s.cwd}\n${s.id ?? ""}\n`);
     outro(color.green(`→ ${s.cwd}`));
     return;
   }
